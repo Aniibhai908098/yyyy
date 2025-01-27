@@ -26,6 +26,12 @@ class TwitchDownloader {
             return;
         }
 
+        // Validate URL format first
+        if (!this.isValidClipUrl(clipUrl)) {
+            this.showStatus('Please enter a valid Twitch clip URL. Example: https://clips.twitch.tv/ClipName or https://www.twitch.tv/channel/clip/ClipName', true);
+            return;
+        }
+
         submitBtn.disabled = true;
         this.showStatus('Fetching clip info...');
         result.innerHTML = '';
@@ -41,9 +47,21 @@ class TwitchDownloader {
         }
     }
 
+    isValidClipUrl(url) {
+        // Add more specific URL validation
+        const clipPatterns = [
+            /^https?:\/\/clips\.twitch\.tv\/\w+/,
+            /^https?:\/\/(?:www\.)?twitch\.tv\/\w+\/clip\/\w+/
+        ];
+
+        return clipPatterns.some(pattern => pattern.test(url));
+    }
+
     async getClipInfo(url) {
         const clipId = this.extractClipId(url);
-        if (!clipId) throw new Error('Invalid Twitch clip URL');
+        if (!clipId) {
+            throw new Error('This appears to be a channel URL. Please provide a clip URL instead.\nExample: https://clips.twitch.tv/ClipName');
+        }
 
         const query = {
             operationName: 'VideoAccessToken_Clip',
@@ -56,21 +74,25 @@ class TwitchDownloader {
             }
         };
 
-        const response = await fetch(this.GQL_ENDPOINT, {
-            method: 'POST',
-            headers: {
-                'Client-Id': this.CLIENT_ID,
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify(query)
-        });
+        try {
+            const response = await fetch(this.GQL_ENDPOINT, {
+                method: 'POST',
+                headers: {
+                    'Client-Id': this.CLIENT_ID,
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(query)
+            });
 
-        if (!response.ok) throw new Error('Failed to fetch clip info');
+            if (!response.ok) throw new Error('Failed to fetch clip info');
 
-        const data = await response.json();
-        if (!data.data?.clip) throw new Error('Clip not found');
+            const data = await response.json();
+            if (!data.data?.clip) throw new Error('Clip not found. Make sure you\'re using a clip URL, not a channel URL.');
 
-        return this.processClipData(data.data.clip);
+            return this.processClipData(data.data.clip);
+        } catch (error) {
+            throw new Error('Error fetching clip. Make sure you\'re using a clip URL, not a channel URL.');
+        }
     }
 
     extractClipId(url) {
@@ -87,13 +109,17 @@ class TwitchDownloader {
     }
 
     processClipData(clip) {
+        if (!clip.videoQualities || clip.videoQualities.length === 0) {
+            throw new Error('No video qualities found for this clip');
+        }
+
         const quality = clip.videoQualities[0]; // Get highest quality
         const token = clip.playbackAccessToken;
         const downloadUrl = `${quality.sourceURL}?sig=${token.signature}&token=${encodeURIComponent(token.value)}`;
 
         return {
-            title: clip.title,
-            broadcaster: clip.broadcaster.displayName,
+            title: clip.title || 'Twitch Clip',
+            broadcaster: clip.broadcaster?.displayName || 'Unknown',
             thumbnail: clip.thumbnailURL,
             downloadUrl: downloadUrl
         };
@@ -121,6 +147,8 @@ class TwitchDownloader {
         try {
             this.showStatus('Starting download...');
             const response = await fetch(url);
+            if (!response.ok) throw new Error('Failed to download clip');
+            
             const blob = await response.blob();
             const downloadUrl = window.URL.createObjectURL(blob);
             
